@@ -1,0 +1,10 @@
+{
+  "name": "ios-preview",
+  "version": "0.1.0",
+  "description": "Build and live-preview any iOS app on the simulator inside Claude — interactive MJPEG view with a side-by-side os.Logger stream. Zero per-project setup.",
+  "author": { "name": "ios-preview contributors" },
+  "homepage": "https://github.com/OWNER/ios-preview",
+  "repository": "https://github.com/OWNER/ios-preview",
+  "license": "MIT",
+  "keywords": ["ios", "simulator", "xcode", "preview", "mjpeg", "xcodebuild", "axe"]
+}
