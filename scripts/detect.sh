@@ -144,7 +144,7 @@ else
         exit 2
     else
         echo "detect.sh: Multiple Xcode projects found in '$ROOT_DIR'. Set IOS_PROJECT to choose one:" >&2
-        for f in "${WORKSPACES[@]}" "${PROJECTS[@]}"; do
+        for f in "${WORKSPACES[@]+"${WORKSPACES[@]}"}" "${PROJECTS[@]+"${PROJECTS[@]}"}"; do
             echo "  $f" >&2
         done
         echo "  export IOS_PROJECT=<path>" >&2
