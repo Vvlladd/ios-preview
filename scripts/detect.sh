@@ -306,3 +306,132 @@ fi
 
 emit "IOS_DERIVED_DATA" "$IOS_DERIVED_DATA"
 
+# ---------------------------------------------------------------------------
+# Step 7 — Single-UDID simulator resolution
+# (CRITICAL: this is the only place a sim is chosen)
+# ---------------------------------------------------------------------------
+if [ -n "${IOS_SIM_UDID:-}" ]; then
+    emit "IOS_SIM_UDID" "$IOS_SIM_UDID"
+else
+    RESOLVED_UDID=""
+
+    case "$SIM_SELECTOR" in
+        auto|booted|"")
+            DEVICES_JSON="$(xcrun simctl list devices --json 2>/dev/null)" || DEVICES_JSON="{}"
+            RESOLVED_UDID="$(python3 - "$DEVICES_JSON" <<'PYEOF'
+import sys, json
+data = json.loads(sys.argv[1])
+for runtime, sims in data.get("devices", {}).items():
+    for sim in sims:
+        if sim.get("state") == "Booted":
+            print(sim["udid"])
+            sys.exit(0)
+PYEOF
+            )" || true
+            ;;
+        *)
+            # 36-char UDID pattern (8-4-4-4-12)
+            if echo "$SIM_SELECTOR" | grep -qE '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'; then
+                RESOLVED_UDID="$SIM_SELECTOR"
+            else
+                # Name match — find first available simulator with that name
+                DEVICES_JSON="$(xcrun simctl list devices --json 2>/dev/null)" || DEVICES_JSON="{}"
+                RESOLVED_UDID="$(python3 - "$DEVICES_JSON" "$SIM_SELECTOR" <<'PYEOF'
+import sys, json
+data = json.loads(sys.argv[1])
+name = sys.argv[2]
+for runtime, sims in data.get("devices", {}).items():
+    for sim in sims:
+        if sim.get("name") == name and sim.get("isAvailable", False):
+            print(sim["udid"])
+            sys.exit(0)
+PYEOF
+                )" || true
+            fi
+            ;;
+    esac
+
+    # If still empty, pick best available iPhone (newest runtime first)
+    if [ -z "$RESOLVED_UDID" ]; then
+        DEVICES_JSON="$(xcrun simctl list devices --json 2>/dev/null)" || DEVICES_JSON="{}"
+        RESOLVED_UDID="$(python3 - "$DEVICES_JSON" <<'PYEOF'
+import sys, json
+data = json.loads(sys.argv[1])
+candidates = []
+for runtime_key, sims in data.get("devices", {}).items():
+    for sim in sims:
+        if not sim.get("isAvailable", False):
+            continue
+        if "iPhone" not in sim.get("name", ""):
+            continue
+        candidates.append((runtime_key, sim["udid"], sim.get("name", "")))
+if not candidates:
+    sys.exit(0)
+# Newest runtime first (sort descending by key), then stable by name
+candidates.sort(key=lambda x: x[0], reverse=True)
+print(candidates[0][1])
+PYEOF
+        )" || true
+    fi
+
+    if [ -z "$RESOLVED_UDID" ]; then
+        echo "detect.sh: No simulator found for selector '$SIM_SELECTOR'. Boot a simulator or set IOS_SIM_UDID." >&2
+        exit 7
+    fi
+
+    IOS_SIM_UDID="$RESOLVED_UDID"
+    emit "IOS_SIM_UDID" "$IOS_SIM_UDID"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 8 — Emit IOS_LOG_SUBSYSTEM only if preset
+# ---------------------------------------------------------------------------
+if [ -n "${IOS_LOG_SUBSYSTEM:-}" ]; then
+    emit "IOS_LOG_SUBSYSTEM" "$IOS_LOG_SUBSYSTEM"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 9 — Atomically write env file if --write-env was given (R5/S3/S7)
+# ---------------------------------------------------------------------------
+if [ -n "$WRITE_ENV_PATH" ]; then
+    ENV_DIR="$(dirname "$WRITE_ENV_PATH")"
+
+    # Ensure parent .claude directory exists with restricted permissions
+    if [ ! -d "$ENV_DIR" ]; then
+        mkdir -p "$ENV_DIR"
+        chmod 0700 "$ENV_DIR"
+    fi
+
+    # Remove any prior file first
+    rm -f "$WRITE_ENV_PATH"
+
+    # Write to a temp file in the same directory (atomic mv)
+    TEMP_ENV="$(mktemp "${ENV_DIR}/.ios-preview-env-XXXXXX")"
+    chmod 0600 "$TEMP_ENV"
+
+    {
+        echo "IOS_PROJECT_DIR=$ROOT_DIR"
+        echo "IOS_PROJECT=$IOS_PROJECT"
+        echo "IOS_PROJECT_KIND=$IOS_PROJECT_KIND"
+        echo "IOS_SCHEME=$IOS_SCHEME"
+        echo "IOS_PRODUCT_NAME=$IOS_PRODUCT_NAME"
+        echo "IOS_BUNDLE_ID=$IOS_BUNDLE_ID"
+        echo "IOS_FULL_PRODUCT_NAME=$IOS_FULL_PRODUCT_NAME"
+        echo "IOS_DERIVED_DATA=$IOS_DERIVED_DATA"
+        echo "IOS_SIM_UDID=$IOS_SIM_UDID"
+        if [ -n "${IOS_LOG_SUBSYSTEM:-}" ]; then
+            echo "IOS_LOG_SUBSYSTEM=$IOS_LOG_SUBSYSTEM"
+        fi
+    } > "$TEMP_ENV"
+
+    mv "$TEMP_ENV" "$WRITE_ENV_PATH"
+    echo "detect.sh: Wrote env file to $WRITE_ENV_PATH (mode 0600)." >&2
+
+    # Ensure .claude/.gitignore lists ios-preview.env (S7)
+    GITIGNORE_PATH="${ENV_DIR}/.gitignore"
+    if [ ! -f "$GITIGNORE_PATH" ]; then
+        echo "ios-preview.env" > "$GITIGNORE_PATH"
+    elif ! grep -qF "ios-preview.env" "$GITIGNORE_PATH"; then
+        echo "ios-preview.env" >> "$GITIGNORE_PATH"
+    fi
+fi
