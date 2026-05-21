@@ -10,7 +10,7 @@ module-level find_axe()/find_sim() side effects at import time.
   2. predicate with subsystem (IOS_PRODUCT_NAME + IOS_LOG_SUBSYSTEM)
   3. quote-escaping in product name (no raw " in output)
   4. LOG_PREDICATE verbatim override
-  5. empty product -> no "Showpad", uses broad fallback
+  5. empty product -> broad fallback (no fabricated process clause)
   6. ALLOWED_KEYS membership (valid in, "hack" out)
   7. Origin logic (absent->ok, localhost->ok, evil.com->reject)
   8. port-in-use raises OSError when binding an already-bound port
@@ -97,11 +97,11 @@ if result1 == 'process == "MyApp"':
 else:
     fail(f"expected process==\"MyApp\", got {result1!r}")
     c1_ok = False
-# Must not contain Showpad
-if "Showpad" not in result1 and "showpad" not in result1.lower():
-    ok("no Showpad in predicate")
+# Generic: a different product name must flow through (no hardcoded app identity)
+if build_predicate({"IOS_PRODUCT_NAME": "OtherApp"}) == 'process == "OtherApp"':
+    ok("predicate derived solely from the provided product name")
 else:
-    fail("Showpad found in predicate")
+    fail("predicate not derived purely from input")
     c1_ok = False
 if c1_ok:
     pass_case("1: process-only predicate")
@@ -191,16 +191,16 @@ else:
     fail_case("4: LOG_PREDICATE verbatim override")
 
 # ---------------------------------------------------------------------------
-# Case 5: empty product -> broad fallback, no "Showpad"
+# Case 5: empty product -> broad fallback (no fabricated process clause)
 # ---------------------------------------------------------------------------
-print("\n=== Case 5: empty product -> broad fallback, no Showpad ===")
+print("\n=== Case 5: empty product -> broad fallback ===")
 env5 = {}
 result5 = build_predicate(env5)
 c5_ok = True
-if "Showpad" not in result5 and "showpad" not in result5.lower():
-    ok(f"no Showpad in fallback predicate: {result5!r}")
+if "process ==" not in result5:
+    ok(f"no fabricated process clause in fallback: {result5!r}")
 else:
-    fail(f"Showpad found in fallback predicate: {result5!r}")
+    fail(f"fallback fabricated a process clause: {result5!r}")
     c5_ok = False
 # Should use a broad fallback, not be empty
 if result5:
@@ -209,9 +209,9 @@ else:
     fail("fallback predicate is empty")
     c5_ok = False
 if c5_ok:
-    pass_case("5: empty product -> no Showpad, broad fallback")
+    pass_case("5: empty product -> broad fallback")
 else:
-    fail_case("5: empty product -> no Showpad, broad fallback")
+    fail_case("5: empty product -> broad fallback")
 
 # ---------------------------------------------------------------------------
 # Case 6: ALLOWED_KEYS membership
