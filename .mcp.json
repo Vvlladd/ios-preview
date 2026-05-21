@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "xcodebuildmcp": { "command": "npx", "args": ["-y", "xcodebuildmcp@1.15.1"] },
+    "sosumi":        { "type": "http", "url": "https://sosumi.ai/mcp" }
+  }
+}
