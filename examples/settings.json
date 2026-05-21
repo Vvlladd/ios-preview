@@ -1,0 +1,7 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": { "source": { "source": "github", "repo": "anthropics/claude-plugins-official" } },
+    "ios-preview": { "source": { "source": "github", "repo": "OWNER/ios-preview" } }
+  },
+  "enabledPlugins": { "ios-preview@ios-preview": true, "context7@claude-plugins-official": true }
+}
