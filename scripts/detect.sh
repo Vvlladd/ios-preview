@@ -152,3 +152,157 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# Step 4 — Scheme resolution (R6 heuristic filter)
+# ---------------------------------------------------------------------------
+if [ -n "${IOS_SCHEME:-}" ]; then
+    emit "IOS_SCHEME" "$IOS_SCHEME"
+elif [ -n "$SCHEME_OVERRIDE" ]; then
+    IOS_SCHEME="$SCHEME_OVERRIDE"
+    emit "IOS_SCHEME" "$IOS_SCHEME"
+else
+    echo "detect.sh: Listing schemes for $IOS_PROJECT ..." >&2
+
+    SCHEMES_JSON="$(xcodebuild -list "-${IOS_PROJECT_KIND}" "$IOS_PROJECT" -json 2>/dev/null)" || {
+        echo "detect.sh: xcodebuild -list failed for '$IOS_PROJECT'. Set IOS_SCHEME to override." >&2
+        exit 6
+    }
+
+    ALL_SCHEMES="$(python3 - "$SCHEMES_JSON" <<'PYEOF'
+import sys, json
+data = json.loads(sys.argv[1])
+for key in ("project", "workspace"):
+    if key in data and "schemes" in data[key]:
+        for s in data[key]["schemes"]:
+            print(s)
+        break
+PYEOF
+    )"
+
+    # Heuristic filter: drop exact "Pods" and names ending in Tests/UITests
+    FILTERED_SCHEMES=()
+    while IFS= read -r scheme; do
+        [ -z "$scheme" ] && continue
+        [ "$scheme" = "Pods" ] && continue
+        case "$scheme" in
+            *Tests|*UITests) continue ;;
+        esac
+        FILTERED_SCHEMES+=("$scheme")
+    done <<< "$ALL_SCHEMES"
+
+    FILTERED_COUNT="${#FILTERED_SCHEMES[@]}"
+
+    if [ "$FILTERED_COUNT" -eq 1 ]; then
+        IOS_SCHEME="${FILTERED_SCHEMES[0]}"
+        emit "IOS_SCHEME" "$IOS_SCHEME"
+    elif [ "$FILTERED_COUNT" -eq 0 ]; then
+        echo "detect.sh: No app scheme found after filtering. Set IOS_SCHEME to override." >&2
+        exit 5
+    else
+        # Multiple survivors — probe each for PRODUCT_TYPE=application
+        APP_SCHEMES=()
+        for scheme in "${FILTERED_SCHEMES[@]}"; do
+            PRODUCT_TYPE="$(xcodebuild -showBuildSettings "-${IOS_PROJECT_KIND}" "$IOS_PROJECT" -scheme "$scheme" 2>/dev/null \
+                | grep -m1 'PRODUCT_TYPE' | awk '{print $NF}' || true)"
+            if [ "$PRODUCT_TYPE" = "com.apple.product-type.application" ]; then
+                APP_SCHEMES+=("$scheme")
+            fi
+        done
+
+        APP_COUNT="${#APP_SCHEMES[@]}"
+
+        if [ "$APP_COUNT" -eq 1 ]; then
+            IOS_SCHEME="${APP_SCHEMES[0]}"
+            emit "IOS_SCHEME" "$IOS_SCHEME"
+        elif [ "$APP_COUNT" -eq 0 ]; then
+            echo "detect.sh: No app scheme found (PRODUCT_TYPE=com.apple.product-type.application). Set IOS_SCHEME to override." >&2
+            exit 5
+        else
+            echo "detect.sh: Multiple app schemes found. Set IOS_SCHEME to choose one:" >&2
+            for s in "${APP_SCHEMES[@]}"; do
+                echo "  $s" >&2
+            done
+            echo "  export IOS_SCHEME=<scheme>" >&2
+            exit 4
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step 5 — Build settings + S1 input validation
+# ---------------------------------------------------------------------------
+echo "detect.sh: Reading build settings for scheme '$IOS_SCHEME' ..." >&2
+
+BUILD_SETTINGS="$(xcodebuild -showBuildSettings "-${IOS_PROJECT_KIND}" "$IOS_PROJECT" -scheme "$IOS_SCHEME" 2>/dev/null)" || {
+    echo "detect.sh: xcodebuild -showBuildSettings failed. Verify IOS_SCHEME='$IOS_SCHEME' builds cleanly." >&2
+    exit 6
+}
+
+_extract_setting() {
+    echo "$BUILD_SETTINGS" | grep -m1 "^ *$1 " | sed 's/.*= *//'
+}
+
+if [ -z "${IOS_PRODUCT_NAME:-}" ]; then
+    IOS_PRODUCT_NAME="$(_extract_setting PRODUCT_NAME)"
+fi
+if [ -z "${IOS_BUNDLE_ID:-}" ]; then
+    IOS_BUNDLE_ID="$(_extract_setting PRODUCT_BUNDLE_IDENTIFIER)"
+fi
+if [ -z "${IOS_FULL_PRODUCT_NAME:-}" ]; then
+    IOS_FULL_PRODUCT_NAME="$(_extract_setting FULL_PRODUCT_NAME)"
+fi
+
+if [ -z "$IOS_PRODUCT_NAME" ]; then
+    echo "detect.sh: PRODUCT_NAME missing from build settings. Verify the scheme builds." >&2
+    exit 6
+fi
+if [ -z "$IOS_BUNDLE_ID" ]; then
+    echo "detect.sh: PRODUCT_BUNDLE_IDENTIFIER missing from build settings." >&2
+    exit 6
+fi
+if [ -z "$IOS_FULL_PRODUCT_NAME" ]; then
+    echo "detect.sh: FULL_PRODUCT_NAME missing from build settings." >&2
+    exit 6
+fi
+
+# S1: validate product name charset
+if ! echo "$IOS_PRODUCT_NAME" | grep -qE '^[A-Za-z0-9 ._+-]+$'; then
+    echo "detect.sh: IOS_PRODUCT_NAME='$IOS_PRODUCT_NAME' contains unexpected characters; set IOS_PRODUCT_NAME/IOS_LOG_SUBSYSTEM to override." >&2
+    exit 6
+fi
+
+# S1: validate subsystem charset if preset
+if [ -n "${IOS_LOG_SUBSYSTEM:-}" ]; then
+    if ! echo "$IOS_LOG_SUBSYSTEM" | grep -qE '^[A-Za-z0-9._-]+$'; then
+        echo "detect.sh: IOS_LOG_SUBSYSTEM='$IOS_LOG_SUBSYSTEM' contains unexpected characters; set IOS_PRODUCT_NAME/IOS_LOG_SUBSYSTEM to override." >&2
+        exit 6
+    fi
+fi
+
+emit "IOS_PRODUCT_NAME" "$IOS_PRODUCT_NAME"
+emit "IOS_BUNDLE_ID" "$IOS_BUNDLE_ID"
+emit "IOS_FULL_PRODUCT_NAME" "$IOS_FULL_PRODUCT_NAME"
+
+# ---------------------------------------------------------------------------
+# Step 6 — DerivedData path
+# ---------------------------------------------------------------------------
+if [ -z "${IOS_DERIVED_DATA:-}" ]; then
+    PROJECT_BASE="$(basename "$IOS_PROJECT")"
+    PROJECT_BASE="${PROJECT_BASE%.xcworkspace}"
+    PROJECT_BASE="${PROJECT_BASE%.xcodeproj}"
+
+    DERIVED_DATA_BASE="$HOME/Library/Developer/Xcode/DerivedData"
+    IOS_DERIVED_DATA=""
+
+    if [ -d "$DERIVED_DATA_BASE" ]; then
+        IOS_DERIVED_DATA="$(find "$DERIVED_DATA_BASE" -maxdepth 1 -name "${PROJECT_BASE}-*" -type d \
+            2>/dev/null | sort | tail -1 || true)"
+    fi
+
+    if [ -z "$IOS_DERIVED_DATA" ]; then
+        IOS_DERIVED_DATA="$DERIVED_DATA_BASE/${PROJECT_BASE}-claude-preview"
+    fi
+fi
+
+emit "IOS_DERIVED_DATA" "$IOS_DERIVED_DATA"
+
