@@ -17,8 +17,9 @@ Routes:
 
 Env:
   PORT              HTTP port (default 8765)
-  FPS               stream fps 1-30 (default 8)
-  QUALITY           JPEG quality 1-100 (default 70)
+  FPS               stream fps 1-30 (default 12)
+  QUALITY           JPEG quality 1-100 (default 55)
+  SCALE             video scale 0.1-1.0 (default 0.75; lower = smaller frames = less lag)
   IOS_SIM_UDID      simulator UDID (set by detect.sh; falls back to SIM then booted)
   SIM               legacy alias for IOS_SIM_UDID
   AXE               path to axe binary (default: search XcodeBuildMCP install)
@@ -34,6 +35,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import socketserver
 import subprocess
 import sys
@@ -41,8 +43,12 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = int(os.environ.get("PORT", "8765"))
-FPS = int(os.environ.get("FPS", "8"))
-QUALITY = int(os.environ.get("QUALITY", "70"))
+FPS = int(os.environ.get("FPS", "12"))
+QUALITY = int(os.environ.get("QUALITY", "55"))
+try:
+    SCALE = max(0.1, min(1.0, float(os.environ.get("SCALE", "0.75"))))
+except ValueError:
+    SCALE = 0.75
 LOG_LEVEL = os.environ.get("LOG_LEVEL", os.environ.get("IOS_LOG_LEVEL", "debug"))
 
 # S2: allowed key names for /key route (match axe button types)
@@ -230,11 +236,11 @@ HTML = f"""<!doctype html>
   .ll.warn{{color:#ffcc80;}}
   .ll.dim{{color:#777;}}
   #hud{{position:fixed;top:10px;left:10px;background:rgba(0,0,0,.65);padding:3px 8px;border-radius:6px;pointer-events:none;font-size:11px;}}
-  #status{{position:fixed;top:10px;right:10px;background:rgba(0,0,0,.65);padding:3px 8px;border-radius:6px;font-size:11px;color:#9c9;}}
+  #status{{align-self:center;white-space:nowrap;flex:0 0 auto;padding:3px 8px;border-radius:6px;font-size:11px;color:#9c9;}}
+  #logbody .empty{{color:#666;font-style:italic;padding:6px 0;}}
 </style>
 </head><body>
 <div id="hud">sim {W_PTS}x{H_PTS}pt · click=tap · drag=swipe</div>
-<div id="status">connecting…</div>
 <div id="wrap">
   <div id="sim"><img id="screen" src="/stream" alt="sim"/></div>
   <div id="logs">
@@ -242,8 +248,9 @@ HTML = f"""<!doctype html>
       <input id="filter" placeholder="filter (substring; case-insensitive)"/>
       <button id="pause">Pause</button>
       <button id="clear">Clear</button>
+      <span id="status">connecting…</span>
     </div>
-    <div id="logbody"></div>
+    <div id="logbody"><div class="empty">Waiting for logs… interact with the app, or set IOS_LOG_SUBSYSTEM if your app uses a custom os.Logger subsystem.</div></div>
   </div>
 </div>
 <script>
@@ -305,6 +312,8 @@ function applyFilter() {{
 }}
 
 function append(line) {{
+  const empty = logbody.querySelector('.empty');
+  if (empty) empty.remove();
   const div = document.createElement('div');
   div.className = lineClass(line);
   div.textContent = line;
@@ -340,6 +349,7 @@ function openSse() {{
   es.onmessage = e => {{
     let line;
     try {{ line = JSON.parse(e.data); }} catch {{ line = e.data; }}
+    if (typeof line === 'string' && line.startsWith('Filtering the log data using')) return;
     if (paused) {{
       bufferOverflow.push(line);
       if (bufferOverflow.length > MAX_LINES) bufferOverflow.shift();
@@ -453,6 +463,11 @@ class Handler(BaseHTTPRequestHandler):
                 except subprocess.TimeoutExpired:
                     proc.kill()
         elif self.path == "/stream":
+            # Lower latency: disable Nagle so each MJPEG chunk ships immediately.
+            try:
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
             proc = subprocess.Popen(
                 [
                     AXE, "stream-video",
@@ -460,6 +475,7 @@ class Handler(BaseHTTPRequestHandler):
                     "--format", "mjpeg",
                     "--fps", str(FPS),
                     "--quality", str(QUALITY),
+                    "--scale", str(SCALE),
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -580,7 +596,7 @@ def start_log_mirror():
 if __name__ == "__main__":
     print(f"sim-mjpeg.py: axe:  {AXE}", flush=True)
     print(f"sim-mjpeg.py: sim:  {SIM}  (screen {W_PTS}x{H_PTS} pt)", flush=True)
-    print(f"sim-mjpeg.py: http://localhost:{PORT}/  (mjpeg {FPS}fps q={QUALITY})", flush=True)
+    print(f"sim-mjpeg.py: http://localhost:{PORT}/  (mjpeg {FPS}fps q={QUALITY} scale={SCALE})", flush=True)
     print(f"sim-mjpeg.py: log predicate: {LOG_PREDICATE}", flush=True)
     start_log_mirror()
     # R12: catch OSError on bind (port already in use)
