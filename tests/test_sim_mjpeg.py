@@ -71,7 +71,9 @@ def build_predicate(env: dict) -> str:
         escaped_sub = subsystem.replace("\\", "\\\\").replace('"', '\\"')
         return f'process == "{escaped_product}" AND subsystem == "{escaped_sub}"'
 
-    return f'process == "{escaped_product}"'
+    if env.get("IOS_LOG_VERBOSE", "").lower() in ("1", "true", "yes"):
+        return f'process == "{escaped_product}"'
+    return f'process == "{escaped_product}" AND NOT (subsystem BEGINSWITH "com.apple")'
 
 
 def check_origin(origin: str, port: int) -> bool:
@@ -88,25 +90,31 @@ def check_origin(origin: str, port: int) -> bool:
 # ---------------------------------------------------------------------------
 # Case 1: process-only predicate
 # ---------------------------------------------------------------------------
-print("\n=== Case 1: process-only predicate ===")
+print("\n=== Case 1: default predicate excludes com.apple; verbose opt-out ===")
 env1 = {"IOS_PRODUCT_NAME": "MyApp"}
 result1 = build_predicate(env1)
 c1_ok = True
-if result1 == 'process == "MyApp"':
-    ok(f"predicate = {result1!r}")
+if result1 == 'process == "MyApp" AND NOT (subsystem BEGINSWITH "com.apple")':
+    ok(f"default excludes com.apple framework noise: {result1!r}")
 else:
-    fail(f"expected process==\"MyApp\", got {result1!r}")
+    fail(f"unexpected default predicate: {result1!r}")
     c1_ok = False
 # Generic: a different product name must flow through (no hardcoded app identity)
-if build_predicate({"IOS_PRODUCT_NAME": "OtherApp"}) == 'process == "OtherApp"':
+if build_predicate({"IOS_PRODUCT_NAME": "OtherApp"}) == 'process == "OtherApp" AND NOT (subsystem BEGINSWITH "com.apple")':
     ok("predicate derived solely from the provided product name")
 else:
     fail("predicate not derived purely from input")
     c1_ok = False
-if c1_ok:
-    pass_case("1: process-only predicate")
+# IOS_LOG_VERBOSE opt-out restores the full firehose (process-only)
+if build_predicate({"IOS_PRODUCT_NAME": "MyApp", "IOS_LOG_VERBOSE": "1"}) == 'process == "MyApp"':
+    ok("IOS_LOG_VERBOSE=1 includes framework logs (process-only)")
 else:
-    fail_case("1: process-only predicate")
+    fail("IOS_LOG_VERBOSE did not restore process-only predicate")
+    c1_ok = False
+if c1_ok:
+    pass_case("1: default excludes com.apple; verbose opt-out")
+else:
+    fail_case("1: default excludes com.apple; verbose opt-out")
 
 # ---------------------------------------------------------------------------
 # Case 2: predicate with subsystem
@@ -130,7 +138,7 @@ else:
 # Case 3: quote-escaping in product name (S1)
 # ---------------------------------------------------------------------------
 print('\n=== Case 3: quote-escaping in product name ===')
-env3 = {"IOS_PRODUCT_NAME": 'Bad"App'}
+env3 = {"IOS_PRODUCT_NAME": 'Bad"App', "IOS_LOG_VERBOSE": "1"}
 result3 = build_predicate(env3)
 c3_ok = True
 # The raw double-quote character must NOT appear unescaped inside the predicate value
@@ -155,7 +163,7 @@ else:
     fail(f"unescaped double-quote found inside value: {inner!r}")
     c3_ok = False
 # Also check backslash escaping
-env3b = {"IOS_PRODUCT_NAME": "App\\Name"}
+env3b = {"IOS_PRODUCT_NAME": "App\\Name", "IOS_LOG_VERBOSE": "1"}
 result3b = build_predicate(env3b)
 if "\\\\" in result3b:
     ok(f"backslash escaped: {result3b!r}")

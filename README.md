@@ -82,7 +82,8 @@ other project file.
 | `IOS_FULL_PRODUCT_NAME` | `.app` bundle name | Detected from build settings |
 | `IOS_DERIVED_DATA` | DerivedData path | Newest matching or `<base>-claude-preview` |
 | `IOS_SIM_UDID` | Simulator UDID (resolved once) | Detected |
-| `IOS_LOG_SUBSYSTEM` | Optional `subsystem ==` filter | Unset (process-only predicate) |
+| `IOS_LOG_SUBSYSTEM` | Filter to one `subsystem ==` (most targeted) | Unset |
+| `IOS_LOG_VERBOSE` | Include `com.apple.*` framework logs (network/CFNetwork/securityd/…) | Unset (framework noise excluded) |
 | `IOS_LOG_LEVEL` | `simctl log stream --level` | `debug` |
 | `PORT` | MJPEG server port | `8765` |
 | `FPS` | Video frames per second | `12` |
@@ -124,6 +125,12 @@ project files, then rerun `/ios-preview:start`.
 **Build fails**
 `/ios-preview:start` runs the build via Bash and reports the `xcodebuild` error
 directly. Fix the underlying compile or signing error in Xcode, then retry.
+
+**Logs too noisy (boringssl / CFNetwork / system spam)**
+The log pane excludes the `com.apple.*` framework subsystems by default so it
+reads like the Xcode console. To narrow further, set `IOS_LOG_SUBSYSTEM` to your
+app's `os.Logger` subsystem. To include the framework firehose, set
+`IOS_LOG_VERBOSE=1`.
 
 **Taps/clicks not registering in the preview pane**
 The interactive server enforces a same-origin (`Origin`) check on tap/swipe

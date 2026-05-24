@@ -190,6 +190,14 @@ if [ -z "${LOG_PREDICATE:-}" ]; then
     if [ -n "${IOS_LOG_SUBSYSTEM:-}" ]; then
         _escaped_sub="$(echo "$IOS_LOG_SUBSYSTEM" | sed 's/\\/\\\\/g; s/"/\\"/g')"
         LOG_PREDICATE="${LOG_PREDICATE} AND subsystem == \"${_escaped_sub}\""
+    else
+        # Xcode-console-like default: drop the com.apple.* framework firehose
+        # (network/boringssl, CFNetwork, securityd, xpc, ...). Set IOS_LOG_VERBOSE
+        # to a truthy value to include those framework logs.
+        case "${IOS_LOG_VERBOSE:-}" in
+            1|true|TRUE|yes|YES) : ;;
+            *) LOG_PREDICATE="${LOG_PREDICATE} AND NOT (subsystem BEGINSWITH \"com.apple\")" ;;
+        esac
     fi
 fi
 

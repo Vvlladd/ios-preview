@@ -60,8 +60,12 @@ def build_predicate() -> str:
 
     Priority:
       1. LOG_PREDICATE env var (full override, passed through verbatim)
-      2. IOS_PRODUCT_NAME (+ optional IOS_LOG_SUBSYSTEM) -- both escaped
-      3. Empty product: warn to stderr + broad fallback (all log events)
+      2. IOS_PRODUCT_NAME + IOS_LOG_SUBSYSTEM -- one specific subsystem
+      3. IOS_PRODUCT_NAME alone -- the app's logs, excluding the noisy Apple
+         framework subsystems (com.apple.*: network/boringssl, CFNetwork,
+         securityd, xpc, UIKit, ...) so the pane reads like the Xcode console.
+         Set IOS_LOG_VERBOSE=1 to include those framework logs too.
+      4. Empty product: warn to stderr + broad fallback (all log events)
     """
     # Full override
     override = os.environ.get("LOG_PREDICATE", "")
@@ -84,7 +88,10 @@ def build_predicate() -> str:
         escaped_sub = subsystem.replace("\\", "\\\\").replace('"', '\\"')
         return f'process == "{escaped_product}" AND subsystem == "{escaped_sub}"'
 
-    return f'process == "{escaped_product}"'
+    if os.environ.get("IOS_LOG_VERBOSE", "").lower() in ("1", "true", "yes"):
+        return f'process == "{escaped_product}"'
+    # Xcode-console-like default: drop the com.apple.* framework firehose.
+    return f'process == "{escaped_product}" AND NOT (subsystem BEGINSWITH "com.apple")'
 
 
 LOG_PREDICATE = build_predicate()
@@ -295,6 +302,11 @@ const clearBtn = document.getElementById('clear');
 let paused = false;
 const MAX_LINES = 600;
 let bufferOverflow = [];
+let autoscroll = true;
+// Pin to the newest line unless the user scrolls up; resume when back at bottom.
+logbody.addEventListener('scroll', () => {{
+  autoscroll = logbody.scrollTop + logbody.clientHeight >= logbody.scrollHeight - 4;
+}});
 
 function lineClass(line) {{
   const tag = line.slice(24, 26);
@@ -321,9 +333,7 @@ function append(line) {{
   if (q && !line.toLowerCase().includes(q)) div.classList.add('hide');
   logbody.appendChild(div);
   while (logbody.children.length > MAX_LINES) logbody.removeChild(logbody.firstChild);
-  if (logbody.scrollTop + logbody.clientHeight > logbody.scrollHeight - 50) {{
-    logbody.scrollTop = logbody.scrollHeight;
-  }}
+  if (autoscroll) logbody.scrollTop = logbody.scrollHeight;
 }}
 
 filterInput.addEventListener('input', applyFilter);
