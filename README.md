@@ -29,7 +29,7 @@ multi-scheme projects, and custom simulator choices are all supported.
 ## 3. Install
 
 ```
-/plugin marketplace add OWNER/ios-preview
+/plugin marketplace add Vvlladd/ios-preview
 /plugin install ios-preview@ios-preview
 /reload-plugins
 ```
@@ -85,8 +85,9 @@ other project file.
 | `IOS_LOG_SUBSYSTEM` | Optional `subsystem ==` filter | Unset (process-only predicate) |
 | `IOS_LOG_LEVEL` | `simctl log stream --level` | `debug` |
 | `PORT` | MJPEG server port | `8765` |
-| `FPS` | Video frames per second | `8` |
-| `QUALITY` | JPEG quality (1-100) | `70` |
+| `FPS` | Video frames per second | `12` |
+| `QUALITY` | JPEG quality (1-100) | `55` |
+| `SCALE` | Video scale `0.1`-`1.0` (lower = smaller frames = less lag) | `0.75` |
 
 ## 7. Troubleshooting
 
@@ -131,6 +132,17 @@ behind a reverse proxy that changes the origin to something other than
 `http://localhost:<PORT>` or `http://127.0.0.1:<PORT>`), requests will be
 rejected with 403. In that case set `PORT` to the port the proxy exposes and
 ensure the `Origin` header matches, or see **Known limitations** below.
+
+**Preview feels laggy / video trails behind**
+The pane is a proxied MJPEG stream, so video latency has a floor set by the
+preview proxy itself — your input (tap/swipe) stays 1:1, but the picture trails
+slightly. Shrink the frames (the biggest lever): lower `SCALE` and/or `QUALITY`.
+Raising `FPS` improves smoothness but can *increase* latency on a constrained
+link, so prefer smaller frames over more frames:
+```sh
+export SCALE=0.5 QUALITY=40
+/ios-preview:start
+```
 
 ## Known limitations
 
