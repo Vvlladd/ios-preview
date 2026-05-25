@@ -23,6 +23,7 @@ Detection is decoupled from the scripts via env vars (see `detect.sh` header for
 - **`launch.json` does NOT expand `${CLAUDE_PLUGIN_ROOT}`** — the command must bake absolute script paths (that's why `write-launch-json.py` takes `--plugin-root`).
 - **Portability:** `*.sh` target macOS **bash 3.2** (no associative arrays, no `${var,,}`, guard empty-array expansion under `set -u`). `*.py` are **Python 3 stdlib only** (no pip).
 - **Publishability:** no `showpad`/`SHOWPAD_`, no machine `/Users/...` paths in shipped files; `xcodebuildmcp` is **version-pinned** (never `@latest`); `sosumi` is `{"type":"http"}`.
+- **Releasing:** bump `version` in `.claude-plugin/plugin.json` (and `marketplace.json` metadata) on **every** shipped change. Claude Code's updater only re-pulls when the version string changes — pushing new commits under the same version requires a manual cache sync. (A versionless git plugin would fall back to the commit SHA, auto-pulling every push.)
 
 ## Commands
 ```sh
