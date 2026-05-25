@@ -41,6 +41,7 @@ import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs
 
 PORT = int(os.environ.get("PORT", "8765"))
 FPS = int(os.environ.get("FPS", "12"))
@@ -51,21 +52,36 @@ except ValueError:
     SCALE = 0.75
 LOG_LEVEL = os.environ.get("LOG_LEVEL", os.environ.get("IOS_LOG_LEVEL", "debug"))
 
+# Log filter mode for the preview dropdown: "app" (Xcode-console-like, default)
+# or "all" (full firehose). IOS_LOG_MODE sets the initial value; IOS_LOG_VERBOSE
+# is a legacy alias for "all".
+DEFAULT_LOG_MODE = os.environ.get("IOS_LOG_MODE", "").lower()
+if DEFAULT_LOG_MODE not in ("app", "all"):
+    DEFAULT_LOG_MODE = (
+        "all"
+        if os.environ.get("IOS_LOG_VERBOSE", "").lower() in ("1", "true", "yes")
+        else "app"
+    )
+_app_selected = " selected" if DEFAULT_LOG_MODE == "app" else ""
+_all_selected = " selected" if DEFAULT_LOG_MODE == "all" else ""
+
 # S2: allowed key names for /key route (match axe button types)
 ALLOWED_KEYS = {"home", "lock", "siri", "side-button", "apple-pay"}
 
 
-def build_predicate() -> str:
+def build_predicate(mode: str = None) -> str:
     """Build the NSPredicate string for simctl log stream.
 
-    Priority:
-      1. LOG_PREDICATE env var (full override, passed through verbatim)
-      2. IOS_PRODUCT_NAME + IOS_LOG_SUBSYSTEM -- one specific subsystem
-      3. IOS_PRODUCT_NAME alone -- the app's logs, excluding the noisy Apple
-         framework subsystems (com.apple.*: network/boringssl, CFNetwork,
-         securityd, xpc, UIKit, ...) so the pane reads like the Xcode console.
-         Set IOS_LOG_VERBOSE=1 to include those framework logs too.
-      4. Empty product: warn to stderr + broad fallback (all log events)
+    `mode` selects how much to show when no LOG_PREDICATE override and no
+    IOS_LOG_SUBSYSTEM is set (the preview dropdown sends ?mode=app|all):
+      - "app" (default): the app's own logs, Xcode-console-like -- drop the
+        com.apple.* subsystems AND anything emitted by a system framework
+        (senderImagePath under /System or /usr/lib). This catches both the
+        subsystem'd firehose (boringssl/CFNetwork) and the subsystem-less
+        library noise shown as (Security)/(CoreVideo)/(UIKitCore)/...
+      - "all": everything the process emits (full firehose).
+
+    Priority: LOG_PREDICATE override > IOS_LOG_SUBSYSTEM > mode.
     """
     # Full override
     override = os.environ.get("LOG_PREDICATE", "")
@@ -88,10 +104,18 @@ def build_predicate() -> str:
         escaped_sub = subsystem.replace("\\", "\\\\").replace('"', '\\"')
         return f'process == "{escaped_product}" AND subsystem == "{escaped_sub}"'
 
-    if os.environ.get("IOS_LOG_VERBOSE", "").lower() in ("1", "true", "yes"):
+    if mode is None:
+        mode = DEFAULT_LOG_MODE
+    if mode == "all":
         return f'process == "{escaped_product}"'
-    # Xcode-console-like default: drop the com.apple.* framework firehose.
-    return f'process == "{escaped_product}" AND NOT (subsystem BEGINSWITH "com.apple")'
+    # "app" (default): app's own logs only -- drop com.apple.* subsystems and
+    # anything emitted by a system framework (sender under /System or /usr/lib).
+    return (
+        f'process == "{escaped_product}"'
+        ' AND NOT (subsystem BEGINSWITH "com.apple")'
+        ' AND NOT (senderImagePath CONTAINS "/System/")'
+        ' AND NOT (senderImagePath CONTAINS "/usr/lib/")'
+    )
 
 
 LOG_PREDICATE = build_predicate()
@@ -235,6 +259,7 @@ HTML = f"""<!doctype html>
   #logbar{{display:flex;gap:6px;padding:6px;background:#161616;border-bottom:1px solid #222;}}
   #logbar input{{flex:1;background:#0c0c0c;color:#ddd;border:1px solid #2a2a2a;padding:4px 8px;border-radius:4px;font:12px ui-monospace,Menlo,monospace;}}
   #logbar button{{background:#2a2a2a;color:#ddd;border:0;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;}}
+  #logbar select{{background:#2a2a2a;color:#ddd;border:0;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;flex:0 0 auto;}}
   #logbar button:hover{{background:#3a3a3a;}}
   #logbody{{flex:1;overflow-y:auto;font:11.5px/1.4 ui-monospace,Menlo,monospace;padding:6px 8px;white-space:pre-wrap;word-break:break-all;}}
   .ll{{padding:1px 0;}}
@@ -252,6 +277,10 @@ HTML = f"""<!doctype html>
   <div id="sim"><img id="screen" src="/stream" alt="sim"/></div>
   <div id="logs">
     <div id="logbar">
+      <select id="logmode" title="Which logs to show">
+        <option value="app"{_app_selected}>App logs</option>
+        <option value="all"{_all_selected}>All logs</option>
+      </select>
       <input id="filter" placeholder="filter (substring; case-insensitive)"/>
       <button id="pause">Pause</button>
       <button id="clear">Clear</button>
@@ -299,6 +328,7 @@ const logbody = document.getElementById('logbody');
 const filterInput = document.getElementById('filter');
 const pauseBtn = document.getElementById('pause');
 const clearBtn = document.getElementById('clear');
+const logmodeSel = document.getElementById('logmode');
 let paused = false;
 const MAX_LINES = 600;
 let bufferOverflow = [];
@@ -347,14 +377,17 @@ pauseBtn.addEventListener('click', () => {{
 }});
 clearBtn.addEventListener('click', () => {{ logbody.innerHTML = ''; bufferOverflow = []; }});
 
+let currentEs = null;
 function openSse() {{
-  const es = new EventSource('/logs/stream');
+  if (currentEs) {{ try {{ currentEs.close(); }} catch (e) {{}} }}
+  const es = new EventSource('/logs/stream?mode=' + encodeURIComponent(logmodeSel.value));
+  currentEs = es;
   es.onopen = () => {{ status.textContent = 'logs live'; status.style.color = '#9c9'; }};
   es.onerror = () => {{
     status.textContent = 'logs reconnecting';
     status.style.color = '#fc9';
     es.close();
-    setTimeout(openSse, 2000);
+    if (currentEs === es) setTimeout(openSse, 2000);
   }};
   es.onmessage = e => {{
     let line;
@@ -368,6 +401,11 @@ function openSse() {{
     }}
   }};
 }}
+logmodeSel.addEventListener('change', () => {{
+  bufferOverflow = [];
+  logbody.innerHTML = '<div class="empty">switching to ' + logmodeSel.value + ' logs…</div>';
+  openSse();
+}});
 openSse();
 </script>
 </body></html>"""
@@ -431,7 +469,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
-        elif self.path == "/logs/stream":
+        elif self.path.split("?", 1)[0] == "/logs/stream":
+            # Optional ?mode=app|all from the toolbar dropdown selects how much
+            # to show; LOG_PREDICATE / IOS_LOG_SUBSYSTEM still take precedence.
+            _qs = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            _mode = (_qs.get("mode") or [None])[0]
+            predicate = build_predicate(_mode)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache, no-transform")
@@ -448,7 +491,7 @@ class Handler(BaseHTTPRequestHandler):
                     "xcrun", "simctl", "spawn", SIM, "log", "stream",
                     "--style=compact",
                     "--level", LOG_LEVEL,
-                    "--predicate", LOG_PREDICATE,
+                    "--predicate", predicate,
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,

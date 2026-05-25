@@ -71,9 +71,14 @@ def build_predicate(env: dict) -> str:
         escaped_sub = subsystem.replace("\\", "\\\\").replace('"', '\\"')
         return f'process == "{escaped_product}" AND subsystem == "{escaped_sub}"'
 
-    if env.get("IOS_LOG_VERBOSE", "").lower() in ("1", "true", "yes"):
+    if env.get("IOS_LOG_VERBOSE", "").lower() in ("1", "true", "yes") or env.get("IOS_LOG_MODE", "").lower() == "all":
         return f'process == "{escaped_product}"'
-    return f'process == "{escaped_product}" AND NOT (subsystem BEGINSWITH "com.apple")'
+    return (
+        f'process == "{escaped_product}"'
+        ' AND NOT (subsystem BEGINSWITH "com.apple")'
+        ' AND NOT (senderImagePath CONTAINS "/System/")'
+        ' AND NOT (senderImagePath CONTAINS "/usr/lib/")'
+    )
 
 
 def check_origin(origin: str, port: int) -> bool:
@@ -90,31 +95,40 @@ def check_origin(origin: str, port: int) -> bool:
 # ---------------------------------------------------------------------------
 # Case 1: process-only predicate
 # ---------------------------------------------------------------------------
-print("\n=== Case 1: default predicate excludes com.apple; verbose opt-out ===")
+print("\n=== Case 1: default (app) excludes system framework noise; verbose/all opt-out ===")
 env1 = {"IOS_PRODUCT_NAME": "MyApp"}
 result1 = build_predicate(env1)
 c1_ok = True
-if result1 == 'process == "MyApp" AND NOT (subsystem BEGINSWITH "com.apple")':
-    ok(f"default excludes com.apple framework noise: {result1!r}")
+if (result1.startswith('process == "MyApp"')
+        and 'NOT (subsystem BEGINSWITH "com.apple")' in result1
+        and 'senderImagePath CONTAINS "/System/"' in result1
+        and 'senderImagePath CONTAINS "/usr/lib/"' in result1):
+    ok(f"default excludes com.apple + system-framework senders: {result1!r}")
 else:
     fail(f"unexpected default predicate: {result1!r}")
     c1_ok = False
 # Generic: a different product name must flow through (no hardcoded app identity)
-if build_predicate({"IOS_PRODUCT_NAME": "OtherApp"}) == 'process == "OtherApp" AND NOT (subsystem BEGINSWITH "com.apple")':
+r_other = build_predicate({"IOS_PRODUCT_NAME": "OtherApp"})
+if r_other.startswith('process == "OtherApp"') and 'senderImagePath CONTAINS "/System/"' in r_other:
     ok("predicate derived solely from the provided product name")
 else:
     fail("predicate not derived purely from input")
     c1_ok = False
-# IOS_LOG_VERBOSE opt-out restores the full firehose (process-only)
+# verbose / all opt-out restores the full firehose (process-only)
 if build_predicate({"IOS_PRODUCT_NAME": "MyApp", "IOS_LOG_VERBOSE": "1"}) == 'process == "MyApp"':
     ok("IOS_LOG_VERBOSE=1 includes framework logs (process-only)")
 else:
     fail("IOS_LOG_VERBOSE did not restore process-only predicate")
     c1_ok = False
-if c1_ok:
-    pass_case("1: default excludes com.apple; verbose opt-out")
+if build_predicate({"IOS_PRODUCT_NAME": "MyApp", "IOS_LOG_MODE": "all"}) == 'process == "MyApp"':
+    ok("IOS_LOG_MODE=all includes framework logs (process-only)")
 else:
-    fail_case("1: default excludes com.apple; verbose opt-out")
+    fail("IOS_LOG_MODE=all did not restore process-only predicate")
+    c1_ok = False
+if c1_ok:
+    pass_case("1: default excludes system noise; verbose/all opt-out")
+else:
+    fail_case("1: default excludes system noise; verbose/all opt-out")
 
 # ---------------------------------------------------------------------------
 # Case 2: predicate with subsystem

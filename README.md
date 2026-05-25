@@ -8,7 +8,9 @@ MJPEG view with a side-by-side `os.Logger` stream. Zero per-project setup.
 `/ios-preview:start` auto-detects your Xcode project and scheme, builds the app,
 boots a simulator if none is running, and opens an interactive pane showing the
 simulator screen. Clicks become taps, drags become swipes. A log panel alongside
-shows your app's `os.Logger` output live.
+shows your app's `os.Logger` output live. A toolbar dropdown toggles between
+**App logs** (your app's output only, Xcode-like) and **All logs** (the full
+system firehose) without restarting.
 
 `/ios-preview:logs` attaches the log stream to an already-running app without
 building or opening the video feed.
@@ -83,7 +85,8 @@ other project file.
 | `IOS_DERIVED_DATA` | DerivedData path | Newest matching or `<base>-claude-preview` |
 | `IOS_SIM_UDID` | Simulator UDID (resolved once) | Detected |
 | `IOS_LOG_SUBSYSTEM` | Filter to one `subsystem ==` (most targeted) | Unset |
-| `IOS_LOG_VERBOSE` | Include `com.apple.*` framework logs (network/CFNetwork/securityd/…) | Unset (framework noise excluded) |
+| `IOS_LOG_MODE` | Initial log filter — `app` (your app's logs, Xcode-like) or `all` (everything). Switchable live via the toolbar dropdown. | `app` |
+| `IOS_LOG_VERBOSE` | Legacy alias for `IOS_LOG_MODE=all` | Unset |
 | `IOS_LOG_LEVEL` | `simctl log stream --level` | `debug` |
 | `PORT` | MJPEG server port | `8765` |
 | `FPS` | Video frames per second | `12` |
@@ -127,10 +130,12 @@ project files, then rerun `/ios-preview:start`.
 directly. Fix the underlying compile or signing error in Xcode, then retry.
 
 **Logs too noisy (boringssl / CFNetwork / system spam)**
-The log pane excludes the `com.apple.*` framework subsystems by default so it
-reads like the Xcode console. To narrow further, set `IOS_LOG_SUBSYSTEM` to your
-app's `os.Logger` subsystem. To include the framework firehose, set
-`IOS_LOG_VERBOSE=1`.
+The pane defaults to **App logs** — it shows what your app's own code emits
+(print, NSLog, Logger) and hides everything from system frameworks (anything
+under `/System` or `/usr/lib`, plus `com.apple.*` subsystems), like the Xcode
+console. Flip the **App logs / All logs** dropdown in the toolbar to switch live,
+or set `IOS_LOG_SUBSYSTEM` to your app's `os.Logger` subsystem to narrow to just
+those messages.
 
 **Taps/clicks not registering in the preview pane**
 The interactive server enforces a same-origin (`Origin`) check on tap/swipe
