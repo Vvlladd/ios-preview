@@ -3,6 +3,10 @@
 Build and live-preview any iOS app on the simulator inside Claude — interactive
 MJPEG view with a side-by-side `os.Logger` stream. Zero per-project setup.
 
+## Demo
+
+https://github.com/user-attachments/assets/a2c5fcbd-618b-4d83-9ea9-38cf3c60b6c2
+
 ## 1. What it does
 
 `/ios-preview:start` auto-detects your Xcode project and scheme, builds the app,
