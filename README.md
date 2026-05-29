@@ -16,6 +16,14 @@ shows your app's `os.Logger` output live. A toolbar dropdown toggles between
 **App logs** (your app's output only, Xcode-like) and **All logs** (the full
 system firehose) without restarting.
 
+The interactive pane also has a **Run/Stop button** (like Xcode's Run): click
+**Run** to rebuild, install, and relaunch the app — build output streams into the
+log panel — and **Stop** to terminate it. Tapping and the live log stream keep
+working throughout. A **simulator picker** in the run bar lists your available iOS
+simulators (booted ones first); choosing one boots it if needed and switches the
+whole preview — video, logs, taps, and the next Run — to that device, so video,
+logs, and build always stay on the same simulator.
+
 `/ios-preview:logs` attaches the log stream to an already-running app without
 building or opening the video feed.
 
@@ -96,6 +104,7 @@ other project file.
 | `FPS` | Video frames per second | `12` |
 | `QUALITY` | JPEG quality (1-100) | `55` |
 | `SCALE` | Video scale `0.1`-`1.0` (lower = smaller frames = less lag) | `0.75` |
+| `IOS_PREVIEW_ALLOW_ORIGIN` | Extra allowed POST `Origin` (exact, or `*`) when the pane is proxied under a non-loopback origin | Unset (loopback origins always allowed) |
 
 ## 7. Troubleshooting
 
@@ -141,13 +150,16 @@ console. Flip the **App logs / All logs** dropdown in the toolbar to switch live
 or set `IOS_LOG_SUBSYSTEM` to your app's `os.Logger` subsystem to narrow to just
 those messages.
 
-**Taps/clicks not registering in the preview pane**
-The interactive server enforces a same-origin (`Origin`) check on tap/swipe
-POST requests. If your preview is proxied under a non-loopback origin (e.g.
-behind a reverse proxy that changes the origin to something other than
-`http://localhost:<PORT>` or `http://127.0.0.1:<PORT>`), requests will be
-rejected with 403. In that case set `PORT` to the port the proxy exposes and
-ensure the `Origin` header matches, or see **Known limitations** below.
+**Taps/clicks or Run/Stop not registering in the preview pane**
+The server enforces an `Origin` check on POST requests (tap/swipe/key and
+Run/Stop). It accepts loopback origins (`localhost`/`127.0.0.1`/`::1`, any port)
+and requests with no `Origin` header. If your preview is proxied under a
+non-loopback origin, requests are rejected with 403 — set
+`IOS_PREVIEW_ALLOW_ORIGIN` to that origin (or `*`) and rerun:
+```sh
+export IOS_PREVIEW_ALLOW_ORIGIN='https://your-proxy-origin'
+/ios-preview:start
+```
 
 **Preview feels laggy / video trails behind**
 The pane is a proxied MJPEG stream, so video latency has a floor set by the
@@ -162,13 +174,13 @@ export SCALE=0.5 QUALITY=40
 
 ## Known limitations
 
-- **Origin/CSRF guard:** the `sim-mjpeg.py` HTTP server only accepts POST
-  requests from `http://localhost:<PORT>` or `http://127.0.0.1:<PORT>` (or
-  requests with no `Origin` header, e.g. direct `curl`). This guard protects
-  against malicious-page CSRF on the loopback interface. If you access the
-  preview through a reverse proxy or tunnel that rewrites the origin, the tap
-  and swipe controls will not work. Relaxing the check requires editing
-  `scripts/sim-mjpeg.py` directly (see `_check_origin()`).
+- **Origin/CSRF guard:** the `sim-mjpeg.py` HTTP server accepts POST requests
+  (`/tap`,`/swipe`,`/key`,`/run`,`/stop`) only from loopback origins
+  (`localhost`/`127.0.0.1`/`::1`, any port) or with no `Origin` header (e.g.
+  direct `curl`). This guards against malicious-page CSRF on the loopback
+  interface. If you access the preview through a proxy/tunnel that rewrites the
+  origin to a non-loopback value, set `IOS_PREVIEW_ALLOW_ORIGIN` to that origin
+  (or `*`) — or edit `_check_origin()` in `scripts/sim-mjpeg.py`.
 
 - **Single booted simulator:** the plugin resolves exactly one simulator UDID at
   detection time and passes it to all downstream scripts. If you boot a second

@@ -43,5 +43,7 @@ Tell the user in one line that you merged `ios-preview:` entries into their
 ## Step 4 — Open the live pane
 Call preview_start with name exactly: ios-preview: interactive simulator
 Then tell the user: preview is live (clicks=tap, drags=swipe; logs in the side
-panel). If preview_start reports the port is in use, advise rerunning with
+panel). The pane has a **Run/Stop button** (Xcode-style): Run rebuilds + installs +
+relaunches the app (build output shows in the log panel), Stop terminates it.
+If preview_start reports the port is in use, advise rerunning with
 PORT=<free> exported, or /ios-preview:stop first.
