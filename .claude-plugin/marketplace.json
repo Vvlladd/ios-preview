@@ -1,7 +1,7 @@
 {
   "name": "ios-preview",
   "owner": { "name": "ios-preview contributors" },
-  "metadata": { "description": "Marketplace for the ios-preview Claude Code plugin.", "version": "0.3.0" },
+  "metadata": { "description": "Marketplace for the ios-preview Claude Code plugin.", "version": "0.5.0" },
   "plugins": [
     { "name": "ios-preview", "source": "./", "description": "Build + live-preview any iOS app on the simulator inside Claude." }
   ]

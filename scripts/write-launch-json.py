@@ -155,14 +155,27 @@ def load_launch_json(path: str):
 # ---------------------------------------------------------------------------
 
 def build_interactive_entry(plugin_root: str, env: dict) -> dict:
-    """Build the 'ios-preview: interactive simulator' launch.json entry."""
-    entry_env = {}
+    """Build the 'ios-preview: interactive simulator' launch.json entry.
 
-    # Always-present
-    if "IOS_SIM_UDID" in env:
-        entry_env["IOS_SIM_UDID"] = env["IOS_SIM_UDID"]
-    if "IOS_PRODUCT_NAME" in env:
-        entry_env["IOS_PRODUCT_NAME"] = env["IOS_PRODUCT_NAME"]
+    Bakes the FULL IOS_* set (not just UDID + product name) so the in-pane
+    Run/Stop button in sim-mjpeg.py can drive run-ios.sh (build/install/launch)
+    and `xcrun simctl terminate` (stop). This mirrors build_logs_entry's keys.
+    """
+    # Full IOS_* set: IOS_BUNDLE_ID is needed to launch/terminate the app and the
+    # build vars are needed by run-ios.sh --no-stream invoked from the server.
+    ios_keys = [
+        "IOS_PROJECT_DIR", "IOS_PROJECT", "IOS_PROJECT_KIND",
+        "IOS_SCHEME", "IOS_CONFIG",
+        "IOS_PRODUCT_NAME", "IOS_BUNDLE_ID", "IOS_FULL_PRODUCT_NAME",
+        "IOS_DERIVED_DATA", "IOS_SIM_UDID",
+    ]
+    entry_env = {}
+    for key in ios_keys:
+        if key in env:
+            entry_env[key] = env[key]
+
+    # IOS_LOG_LEVEL defaults to "debug" (matches build_logs_entry)
+    entry_env["IOS_LOG_LEVEL"] = env.get("IOS_LOG_LEVEL", "debug")
 
     # Optional — only include when present in env file
     for key in ("IOS_LOG_SUBSYSTEM", "PORT", "FPS", "QUALITY"):

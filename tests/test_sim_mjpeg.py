@@ -5,15 +5,17 @@ Tests for sim-mjpeg.py pure logic.
 Re-implements the small testable functions here to avoid triggering the
 module-level find_axe()/find_sim() side effects at import time.
 
-8 cases:
+10 cases:
   1. process-only predicate (IOS_PRODUCT_NAME set, no subsystem)
   2. predicate with subsystem (IOS_PRODUCT_NAME + IOS_LOG_SUBSYSTEM)
   3. quote-escaping in product name (no raw " in output)
   4. LOG_PREDICATE verbatim override
   5. empty product -> broad fallback (no fabricated process clause)
   6. ALLOWED_KEYS membership (valid in, "hack" out)
-  7. Origin logic (absent->ok, localhost->ok, evil.com->reject)
+  7. Origin logic (loopback any-port ok, evil.com reject, IOS_PREVIEW_ALLOW_ORIGIN override)
   8. port-in-use raises OSError when binding an already-bound port
+  9. Run/Stop state machine (idle/failed/running -> building; building busy-guard; stop -> idle)
+  10. stop terminate argv + /status payload shape + new routes present in source
 """
 
 import os
@@ -21,6 +23,7 @@ import socket
 import socketserver
 import sys
 from http.server import HTTPServer
+from urllib.parse import urlsplit
 
 PASS = 0
 FAIL = 0
@@ -81,15 +84,17 @@ def build_predicate(env: dict) -> str:
     )
 
 
-def check_origin(origin: str, port: int) -> bool:
-    """Replicate sim-mjpeg.py _check_origin() logic."""
+def check_origin(origin: str, port: int, allow_origin: str = "") -> bool:
+    """Replicate sim-mjpeg.py _check_origin(): loopback any-port + override."""
     if not origin:
         return True
-    allowed = {
-        f"http://localhost:{port}",
-        f"http://127.0.0.1:{port}",
-    }
-    return origin in allowed
+    if allow_origin and (allow_origin == "*" or origin == allow_origin):
+        return True
+    try:
+        host = urlsplit(origin).hostname
+    except ValueError:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1")
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +265,7 @@ else:
 # ---------------------------------------------------------------------------
 # Case 7: Origin logic
 # ---------------------------------------------------------------------------
-print("\n=== Case 7: Origin logic ===")
+print("\n=== Case 7: Origin logic (loopback any-port + override) ===")
 PORT_TEST = 8765
 c7_ok = True
 # Absent origin -> allowed
@@ -269,27 +274,44 @@ if check_origin("", PORT_TEST):
 else:
     fail("absent Origin should be allowed")
     c7_ok = False
-# localhost origin -> allowed
-if check_origin(f"http://localhost:{PORT_TEST}", PORT_TEST):
-    ok(f"http://localhost:{PORT_TEST} -> allowed")
-else:
-    fail(f"http://localhost:{PORT_TEST} should be allowed")
-    c7_ok = False
-# 127.0.0.1 origin -> allowed
-if check_origin(f"http://127.0.0.1:{PORT_TEST}", PORT_TEST):
-    ok(f"http://127.0.0.1:{PORT_TEST} -> allowed")
-else:
-    fail(f"http://127.0.0.1:{PORT_TEST} should be allowed")
-    c7_ok = False
-# External origin -> rejected
-for evil in ("https://evil.com", "http://evil.com", f"http://localhost:{PORT_TEST + 1}"):
+# loopback hosts on the server port AND any other port -> allowed
+for good in (
+    f"http://localhost:{PORT_TEST}",
+    f"http://127.0.0.1:{PORT_TEST}",
+    f"http://localhost:{PORT_TEST + 1}",   # different port now allowed (proxied pane)
+    "http://127.0.0.1:54321",
+    "http://[::1]:8080",
+):
+    if check_origin(good, PORT_TEST):
+        ok(f"'{good}' -> allowed")
+    else:
+        fail(f"'{good}' should be allowed")
+        c7_ok = False
+# external / look-alike origins -> rejected
+for evil in ("https://evil.com", "http://evil.com", "http://localhost.evil.com:8765"):
     if not check_origin(evil, PORT_TEST):
         ok(f"'{evil}' -> rejected")
     else:
         fail(f"'{evil}' should be rejected")
         c7_ok = False
+# IOS_PREVIEW_ALLOW_ORIGIN override (exact + wildcard), still rejecting non-matches
+if check_origin("https://app.example", PORT_TEST, allow_origin="https://app.example"):
+    ok("exact IOS_PREVIEW_ALLOW_ORIGIN match -> allowed")
+else:
+    fail("exact allow-origin should be allowed")
+    c7_ok = False
+if check_origin("https://anything.example", PORT_TEST, allow_origin="*"):
+    ok("IOS_PREVIEW_ALLOW_ORIGIN='*' -> allowed")
+else:
+    fail("'*' allow-origin should permit any origin")
+    c7_ok = False
+if not check_origin("https://evil.com", PORT_TEST, allow_origin="https://app.example"):
+    ok("non-matching origin still rejected with override set")
+else:
+    fail("non-matching origin should be rejected with override set")
+    c7_ok = False
 if c7_ok:
-    pass_case("7: Origin logic (absent/localhost ok, evil rejected)")
+    pass_case("7: Origin logic (loopback any-port ok, evil rejected, override works)")
 else:
     fail_case("7: Origin logic")
 
@@ -341,6 +363,96 @@ if c8_ok:
     pass_case("8: port-in-use raises OSError")
 else:
     fail_case("8: port-in-use raises OSError")
+
+# ---------------------------------------------------------------------------
+# Case 9: Run/Stop state machine transitions
+# ---------------------------------------------------------------------------
+print("\n=== Case 9: Run/Stop state machine ===")
+
+
+def next_on_run(state: str):
+    """Replicate RunController.run() guard: returns (http_code, new_state)."""
+    if state == "building":
+        return 409, "building"          # busy: reject, stay building
+    return 202, "building"              # idle/running/failed -> (re)build
+
+
+def next_on_stop(state: str):
+    """Replicate RunController.stop(): always idle, 200."""
+    return 200, "idle"
+
+
+c9_ok = True
+for start, want_code, want_state in (
+    ("idle", 202, "building"),
+    ("failed", 202, "building"),
+    ("running", 202, "building"),       # restart semantics
+    ("building", 409, "building"),      # busy guard
+):
+    code, new = next_on_run(start)
+    if code == want_code and new == want_state:
+        ok(f"run() from '{start}' -> {code}, '{new}'")
+    else:
+        fail(f"run() from '{start}' expected ({want_code},{want_state}) got ({code},{new})")
+        c9_ok = False
+for start in ("idle", "building", "running", "failed"):
+    code, new = next_on_stop(start)
+    if code == 200 and new == "idle":
+        ok(f"stop() from '{start}' -> 200, 'idle'")
+    else:
+        fail(f"stop() from '{start}' expected (200,idle) got ({code},{new})")
+        c9_ok = False
+if c9_ok:
+    pass_case("9: Run/Stop state machine transitions")
+else:
+    fail_case("9: Run/Stop state machine")
+
+# ---------------------------------------------------------------------------
+# Case 10: stop terminate argv + /status shape + new routes present in source
+# ---------------------------------------------------------------------------
+print("\n=== Case 10: terminate argv + status shape + routes ===")
+
+
+def terminate_argv(sim: str, bundle: str):
+    return ["xcrun", "simctl", "terminate", sim, bundle]
+
+
+def status_payload(state: str, scheme: str, bundle: str):
+    return {"state": state, "scheme": scheme, "bundleId": bundle, "hasBundleId": bool(bundle)}
+
+
+c10_ok = True
+argv = terminate_argv("ABC-123", "com.example.app")
+if argv == ["xcrun", "simctl", "terminate", "ABC-123", "com.example.app"]:
+    ok(f"terminate argv = {argv}")
+else:
+    fail(f"unexpected terminate argv: {argv}")
+    c10_ok = False
+st = status_payload("running", "MyApp", "com.example.app")
+if set(st) == {"state", "scheme", "bundleId", "hasBundleId"} and st["hasBundleId"] is True:
+    ok(f"status payload shape ok: {st}")
+else:
+    fail(f"unexpected status payload: {st}")
+    c10_ok = False
+if status_payload("idle", "", "")["hasBundleId"] is False:
+    ok("hasBundleId False when bundle id empty")
+else:
+    fail("hasBundleId should be False for empty bundle id")
+    c10_ok = False
+# the new routes + terminate call must exist in the server source
+_src_path2 = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "scripts", "sim-mjpeg.py"))
+with open(_src_path2) as fh:
+    _src2 = fh.read()
+for needle in ('/run', '/stop', '/status', '/build/stream', 'simctl", "terminate', 'IOS_ENV_FILE', '/sims', 'switch_sim'):
+    if needle in _src2:
+        ok(f"sim-mjpeg.py references {needle!r}")
+    else:
+        fail(f"sim-mjpeg.py missing {needle!r}")
+        c10_ok = False
+if c10_ok:
+    pass_case("10: terminate argv + status shape + routes present")
+else:
+    fail_case("10: terminate argv + status shape")
 
 # ---------------------------------------------------------------------------
 # Summary

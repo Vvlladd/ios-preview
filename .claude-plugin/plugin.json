@@ -1,6 +1,6 @@
 {
   "name": "ios-preview",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "Build and live-preview any iOS app on the simulator inside Claude — interactive MJPEG view with a side-by-side os.Logger stream. Zero per-project setup.",
   "author": { "name": "ios-preview contributors" },
   "homepage": "https://github.com/Vvlladd/ios-preview",
