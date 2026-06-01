@@ -1,7 +1,19 @@
 # ios-preview
 
 Build and live-preview any iOS app on the simulator inside Claude — interactive
-MJPEG view with a side-by-side `os.Logger` stream. Zero per-project setup.
+MJPEG view, side-by-side `os.Logger` stream, in-pane **Run/Stop button**, and
+**simulator picker**. Zero per-project setup.
+
+## What's new in 0.5.0
+
+- **In-pane Run/Stop button** — click Run to rebuild, install, and relaunch; build
+  output streams into the log panel. Click Stop to terminate the app (and cancel
+  an in-flight build). Works like Xcode's Run button, from inside the preview pane.
+- **Simulator picker** — a dropdown in the run bar lists all available iOS simulators
+  (booted ones first). Choosing one boots it if needed and re-points the entire
+  preview — video, logs, taps, and the next Run — to that device in one click.
+- **`IOS_PREVIEW_ALLOW_ORIGIN`** — new escape-hatch env var for non-loopback
+  proxy setups (see §6 and Troubleshooting).
 
 ## Demo
 
@@ -11,18 +23,21 @@ https://github.com/user-attachments/assets/a2c5fcbd-618b-4d83-9ea9-38cf3c60b6c2
 
 `/ios-preview:start` auto-detects your Xcode project and scheme, builds the app,
 boots a simulator if none is running, and opens an interactive pane showing the
-simulator screen. Clicks become taps, drags become swipes. A log panel alongside
-shows your app's `os.Logger` output live. A toolbar dropdown toggles between
-**App logs** (your app's output only, Xcode-like) and **All logs** (the full
-system firehose) without restarting.
+simulator screen. Clicks become taps, drags become swipes.
 
-The interactive pane also has a **Run/Stop button** (like Xcode's Run): click
-**Run** to rebuild, install, and relaunch the app — build output streams into the
-log panel — and **Stop** to terminate it. Tapping and the live log stream keep
-working throughout. A **simulator picker** in the run bar lists your available iOS
-simulators (booted ones first); choosing one boots it if needed and switches the
-whole preview — video, logs, taps, and the next Run — to that device, so video,
-logs, and build always stay on the same simulator.
+The run bar at the top of the pane has two controls:
+
+- **Run/Stop button** — click **Run** to rebuild, install, and relaunch the app;
+  build output streams into the log panel live. Click **Stop** to terminate the
+  app (or cancel an in-flight build). Tapping and the log stream keep working
+  throughout.
+- **Simulator picker** — lists all available iOS simulators (booted ones first).
+  Choosing one boots it if needed and re-points the entire preview — video, logs,
+  taps, and the next Run — to that device in one click.
+
+A log panel alongside shows your app's `os.Logger` output live. A toolbar
+dropdown toggles between **App logs** (your app's output only, Xcode-like) and
+**All logs** (the full system firehose) without restarting.
 
 `/ios-preview:logs` attaches the log stream to an already-running app without
 building or opening the video feed.
@@ -190,7 +205,16 @@ export SCALE=0.5 QUALITY=40
 - **Cold builds on first run** can take several minutes. `/ios-preview:start`
   uses an extended Bash timeout; subsequent incremental builds are much faster.
 
-## 8. Security and privacy
+## 8. Changelog
+
+| Version | Highlights |
+|---------|------------|
+| **0.5.0** | In-pane Run/Stop button; simulator picker; `IOS_PREVIEW_ALLOW_ORIGIN` |
+| **0.3.0** | Live App/All log-filter toolbar dropdown; system-framework noise filtering |
+| **0.2.0** | `SCALE` + `QUALITY` tuning knobs; TCP_NODELAY; smoother stream defaults |
+| **0.1.0** | Initial release: `/ios-preview:start`, `/logs`, `/stop`; auto-detection; MJPEG + log pane |
+
+## 9. Security and privacy
 
 **sosumi (Apple documentation MCP)**
 The bundled `sosumi` server is a remote HTTP MCP at `https://sosumi.ai/mcp`.
